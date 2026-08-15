@@ -51,7 +51,7 @@ def _format_log(doc: dict) -> SendLogResponse:
 async def list_history_logs(
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=5000),
     skip: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user),
 ):
@@ -94,7 +94,7 @@ async def get_history_stats(
     logs_col = get_collection(LOGS_COLLECTION)
     campaigns_col = get_collection(CAMPAIGNS_COLLECTION)
 
-    all_logs = await logs_col.find({"user_id": user_id}).to_list(length=5000)
+    all_logs = await logs_col.find({"user_id": user_id}).to_list(length=20000)
     total_campaigns = await campaigns_col.count_documents({"user_id": user_id})
 
     total_sent = len(all_logs)

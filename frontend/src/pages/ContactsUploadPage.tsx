@@ -40,7 +40,7 @@ export default function ContactsUploadPage() {
   const loadContacts = async () => {
     try {
       const { data } = await api.get('/api/contacts', {
-        params: { limit: 200 },
+        params: { limit: 5000 },
       });
       // Map API response to Contact frontend type
       const mapped: Contact[] = data.contacts.map((c: any) => ({

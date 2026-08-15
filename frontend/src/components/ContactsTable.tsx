@@ -10,6 +10,8 @@ import {
   Building2,
   Mail,
   User,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import Button from './ui/Button';
 import type { Contact } from '../types';
@@ -34,6 +36,13 @@ export default function ContactsTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Partial<Contact>>({});
   const [savingEdit, setSavingEdit] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(100);
+
+  // Reset page when filter or search changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, pageSize]);
 
   // Filter contacts by search query and validity status
   const filteredContacts = contacts.filter((c) => {
@@ -49,6 +58,11 @@ export default function ContactsTable({
     if (statusFilter === 'invalid') return !isContactValid;
     return true;
   });
+
+  const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(filteredContacts.length / pageSize)) : 1;
+  const startIndex = pageSize > 0 ? (currentPage - 1) * pageSize : 0;
+  const endIndex = pageSize > 0 ? Math.min(startIndex + pageSize, filteredContacts.length) : filteredContacts.length;
+  const paginatedContacts = pageSize > 0 ? filteredContacts.slice(startIndex, endIndex) : filteredContacts;
 
   const validCount = contacts.filter((c) => c.is_valid ?? c.isValid ?? true).length;
   const invalidCount = contacts.length - validCount;
@@ -231,7 +245,7 @@ export default function ContactsTable({
                   </td>
                 </tr>
               ) : (
-                filteredContacts.map((contact, idx) => {
+                paginatedContacts.map((contact, idx) => {
                   const isEditing = editingId === contact.id;
                   const isSelected = selectedIds.includes(contact.id);
 
@@ -254,7 +268,7 @@ export default function ContactsTable({
 
                       {/* S.No */}
                       <td className="px-3 py-3 text-xs text-text-tertiary text-center font-mono">
-                        {contact.sno || idx + 1}
+                        {contact.sno || startIndex + idx + 1}
                       </td>
 
                       {/* Name */}
@@ -417,6 +431,65 @@ export default function ContactsTable({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination & Rows Selector Footer */}
+        {filteredContacts.length > 0 && (
+          <div className="px-4 py-3 bg-surface-secondary/40 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-text-secondary">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing <strong className="text-text-primary">{startIndex + 1}</strong> to{' '}
+                <strong className="text-text-primary">{endIndex}</strong> of{' '}
+                <strong className="text-text-primary">{filteredContacts.length}</strong> contacts
+              </span>
+
+              <span className="text-border">|</span>
+
+              <label className="flex items-center gap-1.5">
+                <span>Show:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-primary-500 cursor-pointer"
+                >
+                  <option value={50}>50 per page</option>
+                  <option value={100}>100 per page</option>
+                  <option value={250}>250 per page</option>
+                  <option value={500}>500 per page</option>
+                  <option value={1000}>1,000 per page</option>
+                  <option value={3000}>All (up to 3,000)</option>
+                </select>
+              </label>
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded border border-border bg-surface text-text-secondary hover:text-text-primary hover:bg-surface-secondary disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+
+                <span className="px-3 py-1 font-medium text-text-primary">
+                  Page {currentPage} of {totalPages}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded border border-border bg-surface text-text-secondary hover:text-text-primary hover:bg-surface-secondary disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

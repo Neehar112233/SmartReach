@@ -125,13 +125,35 @@ async def upload_contacts(
 
 
 @router.get(
+    "/stats",
+    summary="Get contact summary statistics for current user",
+)
+async def get_contact_stats(
+    current_user: dict = Depends(get_current_user),
+):
+    """Retrieve fast aggregate count statistics for user's contacts."""
+    user_id = current_user["id"]
+    contacts_col = get_collection(CONTACTS_COLLECTION)
+    
+    total = await contacts_col.count_documents({"user_id": user_id})
+    valid = await contacts_col.count_documents({"user_id": user_id, "is_valid": True})
+    invalid = total - valid
+
+    return {
+        "total": total,
+        "valid": valid,
+        "invalid": invalid,
+    }
+
+
+@router.get(
     "",
     response_model=ContactListResponse,
     summary="List contacts for the current user with pagination and search",
 )
 async def list_contacts(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(3000, ge=1, le=10000),
     search: Optional[str] = Query(None, description="Search name, email, company, or title"),
     valid_only: Optional[bool] = Query(None, description="Filter only valid contacts"),
     campaign_id: Optional[str] = Query(None, description="Filter by campaign"),
@@ -166,7 +188,7 @@ async def list_contacts(
 
     # Compute overall stats for this user
     all_cursor = contacts_col.find({"user_id": user_id})
-    all_docs = await all_cursor.to_list(length=10000)
+    all_docs = await all_cursor.to_list(length=20000)
 
     total_rows = len(all_docs)
     valid_count = sum(1 for d in all_docs if d.get("is_valid", True))
