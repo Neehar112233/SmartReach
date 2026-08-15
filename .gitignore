@@ -1,0 +1,63 @@
+# Environment variables (CRITICAL: Do not commit credentials)
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+
+# Python & Virtual Environments
+__pycache__/
+*/__pycache__/
+*/**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+backend/venv/
+backend/.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node & Frontend Build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+dist/
+*.tsbuildinfo
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploaded Files & Resumes
+uploads/
+backend/uploads/
+uploads/*
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Docker
+docker-data/
+
+# Logs & Temp
+*.log
+logs/
+backend/test_attachment.py
+backend/send_live_test.py
+
