@@ -20,11 +20,11 @@ async def run_live_demonstration():
             print("Health Response:", h.json())
 
             # 2. Auth & Registration / Login
-            email = "alex.mercer.live@example.com"
+            email = "neeharnavele@gmail.com"
             password = "Password123!"
             reg_res = await client.post(
                 "/api/auth/register",
-                json={"email": email, "password": password, "full_name": "Alex Mercer"},
+                json={"email": email, "password": password, "full_name": "Navele Neehar"},
             )
             if reg_res.status_code == 201:
                 token = reg_res.json()["access_token"]
@@ -41,11 +41,11 @@ async def run_live_demonstration():
                 "/api/profile",
                 headers=headers,
                 json={
-                    "full_name": "Alex Mercer",
-                    "linkedin_url": "https://linkedin.com/in/alex-mercer",
-                    "github_url": "https://github.com/alex-mercer",
+                    "full_name": "Navele Neehar",
+                    "linkedin_url": "https://linkedin.com/in/neeharnavele",
+                    "github_url": "https://github.com/Neehar112233",
                     "outreach_objective": "Targeting Senior AI & Full-Stack Engineer positions at high-growth tech firms.",
-                    "custom_instructions": "Highlight 5+ years of building scalable microservices with FastAPI, production LLM systems with LangChain, and responsive React web apps.",
+                    "custom_instructions": "Highlight strong experience in building scalable microservices with FastAPI, production LLM systems, and responsive React web apps.",
                 },
             )
 
@@ -53,8 +53,8 @@ async def run_live_demonstration():
             await client.delete("/api/contacts", headers=headers)
             contacts = [
                 {
-                    "name": "Sarah Jenkins",
-                    "email": "sarah.jenkins@techcorp.io",
+                    "name": "Navele Neehar",
+                    "email": "neeharnavele@gmail.com",
                     "company": "TechCorp Solutions",
                     "title": "Lead Technical Recruiter",
                     "location": "San Francisco, CA",
@@ -147,9 +147,9 @@ async def run_live_demonstration():
                     "provider": "gmail",
                     "smtp_host": "smtp.gmail.com",
                     "smtp_port": 587,
-                    "smtp_user": "alex.mercer.outreach@gmail.com",
-                    "sender_name": "Alex Mercer",
-                    "sender_email": "alex.mercer.outreach@gmail.com",
+                    "smtp_user": "neeharnavele@gmail.com",
+                    "sender_name": "Navele Neehar",
+                    "sender_email": "neeharnavele@gmail.com",
                     "use_tls": True,
                     "daily_limit": 50,
                     "delay_seconds": 1,

@@ -192,7 +192,7 @@ export default function LoginPage() {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow"
-                      placeholder="you@example.com"
+                      placeholder="neeharnavele@gmail.com"
                       autoComplete="email"
                     />
                   </div>
@@ -312,7 +312,7 @@ export default function LoginPage() {
                       value={resetEmail}
                       onChange={(e) => setResetEmail(e.target.value)}
                       className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow"
-                      placeholder="you@example.com"
+                      placeholder="neeharnavele@gmail.com"
                       autoComplete="email"
                     />
                   </div>

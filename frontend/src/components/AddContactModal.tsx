@@ -99,7 +99,7 @@ export default function AddContactModal({
               required
               value={formData.name}
               onChange={handleChange}
-              placeholder="e.g., Sarah Jenkins"
+              placeholder="e.g., Navele Neehar"
               className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
@@ -116,7 +116,7 @@ export default function AddContactModal({
                 required
                 value={formData.email}
                 onChange={handleChange}
-                placeholder="sarah.jenkins@techcorp.com"
+                placeholder="neeharnavele@gmail.com"
                 className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>

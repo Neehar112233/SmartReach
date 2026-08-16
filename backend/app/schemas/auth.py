@@ -9,14 +9,14 @@ from pydantic import BaseModel, EmailStr, Field
 
 class RegisterRequest(BaseModel):
     """User registration request."""
-    full_name: str = Field(..., min_length=2, max_length=100, examples=["Neehar Sharma"])
-    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    full_name: str = Field(..., min_length=2, max_length=100, examples=["Navele Neehar"])
+    email: EmailStr = Field(..., examples=["neeharnavele@gmail.com"])
     password: str = Field(..., min_length=8, max_length=128, examples=["securePassword123"])
 
 
 class LoginRequest(BaseModel):
     """User login request."""
-    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    email: EmailStr = Field(..., examples=["neeharnavele@gmail.com"])
     password: str = Field(..., examples=["securePassword123"])
 
 

@@ -366,7 +366,7 @@ async def download_sample_template():
     """Return a clean, ready-to-use CSV template for contacts."""
     csv_content = (
         "Name,Email,Title,Company,Location,LinkedIn\n"
-        "Sarah Jenkins,sarah.jenkins@techcorp.com,Technical Recruiter,TechCorp Solutions,Bangalore,https://linkedin.com/in/sarahjenkins\n"
+        "Navele Neehar,neeharnavele@gmail.com,Technical Recruiter,TechCorp Solutions,Bangalore,https://linkedin.com/in/neeharnavele\n"
         "Alex Rivera,alex.rivera@innovatelabs.io,Lead HR Manager,Innovate Labs,Remote,https://linkedin.com/in/alexrivera\n"
         "Priya Patel,priya.patel@globaltech.com,Head of Talent Acquisition,GlobalTech Systems,Hyderabad,https://linkedin.com/in/priyapatel\n"
         "David Chen,david.chen@nextgenai.co,Engineering Recruiting Lead,NextGen AI,San Francisco,https://linkedin.com/in/davidchen\n"

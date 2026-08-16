@@ -422,7 +422,7 @@ export default function SettingsPage() {
                 type="text"
                 value={senderName}
                 onChange={(e) => setSenderName(e.target.value)}
-                placeholder="e.g., Neehar Sharma"
+                placeholder="e.g., Navele Neehar"
                 className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
@@ -436,7 +436,7 @@ export default function SettingsPage() {
                 type="email"
                 value={senderEmail}
                 onChange={(e) => setSenderEmail(e.target.value)}
-                placeholder="e.g., neehar@example.com"
+                placeholder="e.g., neeharnavele@gmail.com"
                 className="w-full px-3 py-2 rounded-lg border border-border bg-surface text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500"
               />
             </div>
