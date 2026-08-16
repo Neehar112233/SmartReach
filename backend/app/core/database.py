@@ -5,6 +5,8 @@ Uses Motor (async MongoDB driver) with FastAPI lifespan events.
 """
 
 import logging
+import re
+import urllib.parse
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
 
@@ -15,12 +17,27 @@ _client: AsyncIOMotorClient | None = None
 _database: AsyncIOMotorDatabase | None = None
 
 
+def sanitize_mongodb_uri(uri: str) -> str:
+    """Ensure username and password in MongoDB URI are properly RFC 3986 encoded."""
+    if not uri or not uri.startswith("mongodb"):
+        return uri
+    pattern = re.compile(r"^(mongodb(?:\+srv)?:\/\/)([^:]+):(.+)@([^/?#]+)(.*)$")
+    match = pattern.match(uri)
+    if match:
+        scheme, user, password, host, rest = match.groups()
+        clean_user = urllib.parse.quote_plus(urllib.parse.unquote_plus(user))
+        clean_password = urllib.parse.quote_plus(urllib.parse.unquote_plus(password))
+        return f"{scheme}{clean_user}:{clean_password}@{host}{rest}"
+    return uri
+
+
 async def connect_to_mongodb() -> None:
     """Initialize the MongoDB connection pool."""
     global _client, _database
     try:
+        sanitized_uri = sanitize_mongodb_uri(settings.MONGODB_URI)
         _client = AsyncIOMotorClient(
-            settings.MONGODB_URI,
+            sanitized_uri,
             serverSelectionTimeoutMS=5000,
         )
         _database = _client[settings.DATABASE_NAME]
@@ -28,7 +45,7 @@ async def connect_to_mongodb() -> None:
         await _client.admin.command("ping")
         logger.info(
             "Connected to MongoDB: %s (db: %s)",
-            settings.MONGODB_URI.split("@")[-1] if "@" in settings.MONGODB_URI else settings.MONGODB_URI,
+            sanitized_uri.split("@")[-1] if "@" in sanitized_uri else sanitized_uri,
             settings.DATABASE_NAME,
         )
     except Exception as e:
@@ -36,6 +53,7 @@ async def connect_to_mongodb() -> None:
         _client = None
         _database = None
         raise
+
 
 
 async def close_mongodb_connection() -> None:
