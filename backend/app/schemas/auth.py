@@ -40,6 +40,12 @@ class ForgotPasswordRequest(BaseModel):
     email: EmailStr = Field(..., examples=["neehar@example.com"])
 
 
+class VerifyResetOTPRequest(BaseModel):
+    """Validate password reset OTP code before asking for new password."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
+
+
 class ResetPasswordRequest(BaseModel):
     """Submit reset OTP with new password."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
@@ -54,11 +60,10 @@ class ResendOTPRequest(BaseModel):
 
 
 class OTPActionResponse(BaseModel):
-    """Generic response for OTP triggering actions."""
+    """Generic response for OTP triggering actions (never exposes OTP)."""
     message: str
     email: str
     email_sent: bool = True
-    dev_otp: Optional[str] = None
 
 
 class TokenResponse(BaseModel):

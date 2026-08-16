@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     EMAIL_DELAY_SECONDS: float = 2.0
     MAX_CONSECUTIVE_FAILURES: int = 5
 
-    # --- System SMTP (for Auth OTPs & Password Resets) ---
+    # --- System Email (for Auth OTPs & Password Resets) ---
+    RESEND_API_KEY: Optional[str] = None
     SYSTEM_SMTP_HOST: str = "smtp.gmail.com"
     SYSTEM_SMTP_PORT: int = 587
     SYSTEM_SMTP_USER: Optional[str] = None
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
     SYSTEM_SMTP_USE_TLS: bool = True
     SYSTEM_SMTP_USE_SSL: bool = False
     OTP_EXPIRY_MINUTES: int = 10
+
 
     model_config = {
         "env_file": ".env",

@@ -27,7 +27,6 @@ export default function RegisterPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [devOtp, setDevOtp] = useState<string | null>(null);
 
   // Password validation checks
   const passwordChecks = [
@@ -76,10 +75,7 @@ export default function RegisterPage() {
       const res = await registerSendOTP(fullName, email, password);
       setStep('otp');
       setResendCooldown(30);
-      if (res.dev_otp) {
-        setDevOtp(res.dev_otp);
-      }
-      setSuccessMessage(res.message || 'Verification code sent to your email.');
+      setSuccessMessage(res.message || 'Verification code sent directly to your email inbox.');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       setError(
@@ -124,13 +120,6 @@ export default function RegisterPage() {
     otpInputRefs.current[nextIndex]?.focus();
   };
 
-  const fillDevOtp = () => {
-    if (!devOtp || devOtp.length !== 6) return;
-    const digits = devOtp.split('');
-    setOtpDigits(digits);
-    otpInputRefs.current[5]?.focus();
-  };
-
   // Step 2: Verify OTP and activate account
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +138,7 @@ export default function RegisterPage() {
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       setError(
-        axiosErr.response?.data?.detail || 'Invalid or expired verification code. Please try again.'
+        axiosErr.response?.data?.detail || 'Invalid or expired verification code. Please check your email and try again.'
       );
     } finally {
       setLoading(false);
@@ -164,11 +153,8 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const res = await resendOTP(email, 'register');
+      await resendOTP(email, 'register');
       setResendCooldown(30);
-      if (res.dev_otp) {
-        setDevOtp(res.dev_otp);
-      }
       setSuccessMessage('A fresh verification code has been dispatched to your email.');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
@@ -380,7 +366,7 @@ export default function RegisterPage() {
                   Verify your email
                 </h1>
                 <p className="text-sm text-text-secondary mt-1.5">
-                  Enter the 6-digit code sent to <br />
+                  Enter the 6-digit verification code sent directly to <br />
                   <span className="font-semibold text-text-primary">{email}</span>
                 </p>
               </div>
@@ -396,21 +382,6 @@ export default function RegisterPage() {
                 <div className="mb-5 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
                   <p className="text-xs text-emerald-700">{successMessage}</p>
-                </div>
-              )}
-
-              {devOtp && (
-                <div className="mb-5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-lg flex items-center justify-between">
-                  <span className="text-xs text-indigo-700 font-medium">
-                    Test Mode Code: <strong className="tracking-wider">{devOtp}</strong>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={fillDevOtp}
-                    className="text-xs text-primary-600 font-semibold hover:underline"
-                  >
-                    Auto-Fill
-                  </button>
                 </div>
               )}
 
@@ -450,7 +421,7 @@ export default function RegisterPage() {
               {/* Resend OTP */}
               <div className="mt-6 text-center">
                 <p className="text-xs text-text-secondary">
-                  Didn&apos;t receive the email? Check your Spam or{' '}
+                  Didn&apos;t receive the email? Check your Spam folder or{' '}
                   <button
                     type="button"
                     onClick={handleResend}

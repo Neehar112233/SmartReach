@@ -2,7 +2,8 @@
 SmartReach AI — OTP & System Email Service
 
 Manages 6-digit OTP generation, persistence with TTL in MongoDB,
-and system-level SMTP email delivery for Registration and Password Resets.
+and system-level transactional email delivery via SMTP or Resend API
+for Registration and Password Resets.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional, Tuple
+import httpx
 
 from app.core.config import settings
 from app.core.database import get_collection
@@ -28,16 +30,54 @@ def generate_otp() -> str:
     return f"{secrets.randbelow(900000) + 100000}"
 
 
-def send_system_email_sync(
+async def send_system_email_via_resend(
     recipient_email: str,
     recipient_name: str,
     subject: str,
     text_content: str,
     html_content: str,
 ) -> Tuple[bool, Optional[str]]:
-    """
-    Synchronously compose and deliver a system transactional email via SMTP.
-    """
+    """Deliver transactional email using Resend REST API."""
+    if not settings.RESEND_API_KEY:
+        return False, "Resend API key not configured."
+
+    sender = f"{settings.SYSTEM_SMTP_SENDER_NAME} <{settings.SYSTEM_SMTP_SENDER_EMAIL or 'onboarding@resend.dev'}>"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": sender,
+                    "to": [f"{recipient_name} <{recipient_email}>" if recipient_name else recipient_email],
+                    "subject": subject,
+                    "html": html_content,
+                    "text": text_content,
+                },
+            )
+            if resp.status_code in [200, 201]:
+                logger.info("Email delivered via Resend API to %s", recipient_email)
+                return True, None
+            else:
+                err_msg = f"Resend API error: {resp.status_code} {resp.text}"
+                logger.error(err_msg)
+                return False, err_msg
+    except Exception as e:
+        logger.error("Failed to deliver email via Resend API to %s: %s", recipient_email, e)
+        return False, str(e)
+
+
+def send_system_email_via_smtp_sync(
+    recipient_email: str,
+    recipient_name: str,
+    subject: str,
+    text_content: str,
+    html_content: str,
+) -> Tuple[bool, Optional[str]]:
+    """Synchronously deliver transactional email using SMTP."""
     host = settings.SYSTEM_SMTP_HOST
     port = settings.SYSTEM_SMTP_PORT
     user = settings.SYSTEM_SMTP_USER
@@ -46,8 +86,11 @@ def send_system_email_sync(
     sender_name = settings.SYSTEM_SMTP_SENDER_NAME
 
     if not host or not user or not password:
-        logger.warning("System SMTP credentials not configured. Email to %s skipped.", recipient_email)
-        return False, "System SMTP is not configured on the server."
+        logger.warning(
+            "System SMTP credentials not configured (SYSTEM_SMTP_USER/PASSWORD). Live email delivery skipped for %s.",
+            recipient_email,
+        )
+        return False, "System SMTP credentials are not configured on the server."
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -57,7 +100,6 @@ def send_system_email_sync(
     domain = sender_email.split("@")[-1] if "@" in sender_email else "smartreach.ai"
     msg["Message-ID"] = email.utils.make_msgid(domain=domain)
 
-    # Attach text and html alternatives
     part_text = MIMEText(text_content, "plain", "utf-8")
     part_html = MIMEText(html_content, "html", "utf-8")
     msg.attach(part_text)
@@ -77,10 +119,10 @@ def send_system_email_sync(
         server.login(user, password)
         server.sendmail(sender_email, [recipient_email], msg.as_string())
         server.quit()
-        logger.info("System email successfully sent to %s [%s]", recipient_email, subject)
+        logger.info("System email successfully delivered to %s via SMTP [%s]", recipient_email, subject)
         return True, None
     except Exception as e:
-        logger.error("Failed to send system email to %s: %s", recipient_email, e)
+        logger.error("Failed to send system email to %s via SMTP: %s", recipient_email, e)
         return False, str(e)
     finally:
         if server:
@@ -97,9 +139,18 @@ async def send_system_email(
     text_content: str,
     html_content: str,
 ) -> Tuple[bool, Optional[str]]:
-    """Asynchronous wrapper for system SMTP email delivery."""
+    """
+    Deliver transactional email trying Resend API first (if set), then SMTP.
+    """
+    if settings.RESEND_API_KEY:
+        ok, err = await send_system_email_via_resend(
+            recipient_email, recipient_name, subject, text_content, html_content
+        )
+        if ok:
+            return True, None
+
     return await asyncio.to_thread(
-        send_system_email_sync,
+        send_system_email_via_smtp_sync,
         recipient_email=recipient_email,
         recipient_name=recipient_name,
         subject=subject,
@@ -109,7 +160,7 @@ async def send_system_email(
 
 
 def _render_email_template(title: str, greeting: str, description: str, otp: str, footnote: str) -> Tuple[str, str]:
-    """Generate both plain text and rich HTML versions of transactional OTP emails."""
+    """Generate both plain text and responsive dark-mode HTML email."""
     plain_text = f"""{title}
 
 {greeting},
@@ -194,7 +245,6 @@ async def store_otp(
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=settings.OTP_EXPIRY_MINUTES)
 
-    # Invalidate previous unconsumed OTPs for this email and purpose
     await col.delete_many({"email": email.lower(), "purpose": purpose})
 
     doc = {
@@ -208,11 +258,10 @@ async def store_otp(
     await col.insert_one(doc)
 
 
-async def verify_otp(email: str, otp: str, purpose: str) -> Tuple[bool, Optional[dict]]:
+async def check_otp_validity(email: str, otp: str, purpose: str) -> Tuple[bool, Optional[dict]]:
     """
-    Validate OTP against MongoDB records.
-    Returns (True, metadata) if valid, or (False, None).
-    Consumes OTP on successful validation.
+    Check if OTP is valid without consuming/deleting it.
+    Used for intermediate multi-step verification.
     """
     col = get_collection(OTP_COLLECTION)
     now = datetime.now(timezone.utc)
@@ -227,7 +276,26 @@ async def verify_otp(email: str, otp: str, purpose: str) -> Tuple[bool, Optional
     if not record:
         return False, None
 
-    # Consume OTP so it cannot be re-used
+    return True, record.get("metadata", {})
+
+
+async def verify_otp(email: str, otp: str, purpose: str) -> Tuple[bool, Optional[dict]]:
+    """
+    Validate OTP and consume/delete it on success.
+    """
+    col = get_collection(OTP_COLLECTION)
+    now = datetime.now(timezone.utc)
+
+    record = await col.find_one({
+        "email": email.lower(),
+        "otp": otp.strip(),
+        "purpose": purpose,
+        "expires_at": {"$gt": now},
+    })
+
+    if not record:
+        return False, None
+
     await col.delete_one({"_id": record["_id"]})
     return True, record.get("metadata", {})
 
@@ -237,10 +305,7 @@ async def send_registration_otp(
     full_name: str,
     password_hash: str,
 ) -> Tuple[str, bool, Optional[str]]:
-    """
-    Generate and dispatch registration verification OTP email.
-    Stores metadata so the user account can be created upon OTP confirmation.
-    """
+    """Generate and dispatch registration verification OTP email."""
     otp = generate_otp()
     await store_otp(
         email=email,
@@ -270,9 +335,7 @@ async def send_forgot_password_otp(
     email: str,
     full_name: str,
 ) -> Tuple[str, bool, Optional[str]]:
-    """
-    Generate and dispatch password reset OTP email.
-    """
+    """Generate and dispatch password reset OTP email."""
     otp = generate_otp()
     await store_otp(
         email=email,

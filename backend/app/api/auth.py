@@ -2,7 +2,7 @@
 SmartReach AI — Authentication API
 
 Endpoints for registration with Email OTP verification, direct login,
-password reset via Email OTP, and token generation.
+password recovery with separate OTP verification step, and token generation.
 """
 
 import logging
@@ -20,6 +20,7 @@ from app.schemas.auth import (
     RegisterVerifyOTPRequest,
     LoginRequest,
     ForgotPasswordRequest,
+    VerifyResetOTPRequest,
     ResetPasswordRequest,
     ResendOTPRequest,
     OTPActionResponse,
@@ -30,10 +31,9 @@ from app.services.otp_service import (
     send_registration_otp,
     send_forgot_password_otp,
     verify_otp,
+    check_otp_validity,
     store_otp,
     generate_otp,
-    send_system_email,
-    _render_email_template,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ router = APIRouter()
 )
 async def register_send_otp(payload: RegisterSendOTPRequest):
     """
-    Validate registration input and email a 6-digit OTP to the user.
+    Validate registration input and email a 6-digit OTP directly to the user's inbox.
     """
     users = get_collection(USERS_COLLECTION)
     clean_email = payload.email.lower().strip()
@@ -66,20 +66,19 @@ async def register_send_otp(payload: RegisterSendOTPRequest):
     # Hash password securely upfront
     pw_hash = hash_password(payload.password)
 
-    # Generate and dispatch OTP
+    # Generate and dispatch OTP email
     otp, email_sent, err = await send_registration_otp(
         email=clean_email,
         full_name=payload.full_name.strip(),
         password_hash=pw_hash,
     )
 
-    logger.info("Registration OTP dispatched to: %s (sent via SMTP: %s)", clean_email, email_sent)
+    logger.info("Registration OTP dispatched for %s (email sent: %s)", clean_email, email_sent)
 
     return OTPActionResponse(
-        message="A 6-digit verification code has been sent to your email.",
+        message="A 6-digit verification code has been sent to your email inbox.",
         email=clean_email,
         email_sent=email_sent,
-        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
     )
 
 
@@ -91,7 +90,7 @@ async def register_send_otp(payload: RegisterSendOTPRequest):
 )
 async def register_verify_otp(payload: RegisterVerifyOTPRequest):
     """
-    Verify the 6-digit OTP code and create the user account in MongoDB.
+    Verify the 6-digit OTP code received in email and create the user account in MongoDB.
     """
     clean_email = payload.email.lower().strip()
     is_valid, metadata = await verify_otp(clean_email, payload.otp, purpose="register")
@@ -99,12 +98,12 @@ async def register_verify_otp(payload: RegisterVerifyOTPRequest):
     if not is_valid or not metadata:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification code. Please request a new code.",
+            detail="Invalid or expired verification code. Please check your email or request a new code.",
         )
 
     users = get_collection(USERS_COLLECTION)
 
-    # Double check to prevent race condition
+    # Prevent race condition
     existing = await users.find_one({"email": clean_email})
     if existing:
         raise HTTPException(
@@ -135,9 +134,8 @@ async def register_verify_otp(payload: RegisterVerifyOTPRequest):
     result = await users.insert_one(user_doc)
     user_id = str(result.inserted_id)
 
-    logger.info("New verified user registered: %s (%s)", clean_email, user_id)
+    logger.info("New verified user created: %s (%s)", clean_email, user_id)
 
-    # Issue JWT token
     token = create_access_token(user_id=user_id, email=clean_email)
 
     return TokenResponse(
@@ -155,11 +153,11 @@ async def register_verify_otp(payload: RegisterVerifyOTPRequest):
 @router.post(
     "/login",
     response_model=TokenResponse,
-    summary="Login with email and password (Direct sign-in)",
+    summary="Login with email and password (Direct sign-in, no OTP)",
 )
 async def login(payload: LoginRequest):
     """
-    Authenticate a user directly with email and password without OTP friction.
+    Authenticate a user directly with email and password without OTP.
     """
     users = get_collection(USERS_COLLECTION)
     clean_email = payload.email.lower().strip()
@@ -192,17 +190,17 @@ async def login(payload: LoginRequest):
     )
 
 
-# --- Forgot Password Flow (2-Step with Email OTP) ---
+# --- Forgot Password Flow (Separate Verify OTP -> Set New Password) ---
 
 @router.post(
     "/forgot-password",
     response_model=OTPActionResponse,
     status_code=status.HTTP_200_OK,
-    summary="Step 1: Request password reset OTP email",
+    summary="Forgot Password Step 1: Send recovery OTP to email",
 )
 async def forgot_password(payload: ForgotPasswordRequest):
     """
-    Find user and dispatch a 6-digit password reset OTP email.
+    Find user and email a 6-digit password reset OTP directly to their inbox.
     """
     clean_email = payload.email.lower().strip()
     users = get_collection(USERS_COLLECTION)
@@ -220,25 +218,49 @@ async def forgot_password(payload: ForgotPasswordRequest):
         full_name=full_name,
     )
 
-    logger.info("Password reset OTP dispatched to: %s (sent via SMTP: %s)", clean_email, email_sent)
+    logger.info("Password reset OTP sent to %s (email sent: %s)", clean_email, email_sent)
 
     return OTPActionResponse(
-        message="A password reset code has been sent to your email.",
+        message="A 6-digit recovery code has been sent to your email inbox.",
         email=clean_email,
         email_sent=email_sent,
-        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
     )
+
+
+@router.post(
+    "/verify-reset-otp",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Forgot Password Step 2: Validate OTP code before setting new password",
+)
+async def verify_reset_otp(payload: VerifyResetOTPRequest):
+    """
+    Check that the entered reset OTP is valid and not expired.
+    """
+    clean_email = payload.email.lower().strip()
+    is_valid, _ = await check_otp_validity(clean_email, payload.otp, purpose="forgot_password")
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired recovery code. Please check your email or request a new code.",
+        )
+
+    return {
+        "valid": True,
+        "message": "Recovery code verified. Please set your new password.",
+    }
 
 
 @router.post(
     "/reset-password",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    summary="Step 2: Submit reset OTP with new password",
+    summary="Forgot Password Step 3: Set new password and consume OTP",
 )
 async def reset_password(payload: ResetPasswordRequest):
     """
-    Verify password reset OTP and update user's password in MongoDB.
+    Verify reset OTP and save new bcrypt password in MongoDB.
     """
     clean_email = payload.email.lower().strip()
     is_valid, _ = await verify_otp(clean_email, payload.otp, purpose="forgot_password")
@@ -246,7 +268,7 @@ async def reset_password(payload: ResetPasswordRequest):
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset code. Please request a new code.",
+            detail="Invalid or expired reset code. Please request a new recovery code.",
         )
 
     users = get_collection(USERS_COLLECTION)
@@ -278,18 +300,17 @@ async def reset_password(payload: ResetPasswordRequest):
     "/resend-otp",
     response_model=OTPActionResponse,
     status_code=status.HTTP_200_OK,
-    summary="Resend verification or password reset OTP",
+    summary="Resend verification or password reset OTP to email",
 )
 async def resend_otp(payload: ResendOTPRequest):
     """
-    Resend a fresh OTP for registration or password reset.
+    Resend a fresh OTP directly to the user's email.
     """
     clean_email = payload.email.lower().strip()
     otp_col = get_collection("otp_codes")
     users_col = get_collection(USERS_COLLECTION)
 
     if payload.purpose == "register":
-        # Check existing pending OTP metadata
         existing_otp = await otp_col.find_one({"email": clean_email, "purpose": "register"})
         full_name = existing_otp.get("metadata", {}).get("full_name", "User") if existing_otp else "User"
         pw_hash = existing_otp.get("metadata", {}).get("password_hash") if existing_otp else None
@@ -319,14 +340,13 @@ async def resend_otp(payload: ResendOTPRequest):
         )
 
     return OTPActionResponse(
-        message="A new 6-digit code has been sent to your email.",
+        message="A fresh 6-digit code has been sent to your email inbox.",
         email=clean_email,
         email_sent=email_sent,
-        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
     )
 
 
-# --- Legacy direct registration endpoint for compatibility ---
+# --- Legacy direct registration endpoint for backward compatibility ---
 
 @router.post(
     "/register",
@@ -335,7 +355,7 @@ async def resend_otp(payload: ResendOTPRequest):
     summary="Direct register (backward compatibility)",
 )
 async def direct_register(payload: RegisterRequest):
-    """Legacy endpoint for direct registration without OTP verification."""
+    """Legacy endpoint for direct registration without OTP."""
     users = get_collection(USERS_COLLECTION)
     clean_email = payload.email.lower().strip()
 

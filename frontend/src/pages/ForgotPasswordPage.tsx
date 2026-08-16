@@ -5,11 +5,11 @@ import { useAuth } from '../contexts/AuthContext';
 import Button from '../components/ui/Button';
 
 export default function ForgotPasswordPage() {
-  const { forgotPassword, resetPassword, resendOTP } = useAuth();
+  const { forgotPassword, verifyResetOTP, resetPassword, resendOTP } = useAuth();
   const navigate = useNavigate();
 
-  // Step state: 'email' | 'reset' | 'success'
-  const [step, setStep] = useState<'email' | 'reset' | 'success'>('email');
+  // Multi-step flow: 'email' (Step 1) -> 'otp' (Step 2) -> 'new_password' (Step 3) -> 'success' (Step 4)
+  const [step, setStep] = useState<'email' | 'otp' | 'new_password' | 'success'>('email');
 
   // Form inputs
   const [email, setEmail] = useState('');
@@ -17,18 +17,17 @@ export default function ForgotPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // OTP inputs (6 individual boxes)
+  // OTP inputs (6 separate digit boxes)
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Feedback states
+  // State feedback & countdown
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
-  const [devOtp, setDevOtp] = useState<string | null>(null);
 
-  // Password validation rules
+  // Password requirements check
   const passwordChecks = [
     { label: 'At least 8 characters', met: newPassword.length >= 8 },
     { label: 'Contains a number', met: /\d/.test(newPassword) },
@@ -38,7 +37,7 @@ export default function ForgotPasswordPage() {
   const passwordsMatch = newPassword.length > 0 && newPassword === confirmPassword;
   const allChecksMet = passwordChecks.every((c) => c.met) && passwordsMatch;
 
-  // Countdown timer for resend
+  // Countdown timer for OTP resend
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const interval = setInterval(() => {
@@ -47,14 +46,14 @@ export default function ForgotPasswordPage() {
     return () => clearInterval(interval);
   }, [resendCooldown]);
 
-  // Focus first OTP input when transitioning to reset step
+  // Focus first OTP box on entering Step 2
   useEffect(() => {
-    if (step === 'reset') {
+    if (step === 'otp') {
       otpInputRefs.current[0]?.focus();
     }
   }, [step]);
 
-  // Step 1: Send reset OTP
+  // ================= Step 1: Send Recovery OTP =================
   const handleSendResetCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -63,23 +62,20 @@ export default function ForgotPasswordPage() {
 
     try {
       const res = await forgotPassword(email);
-      setStep('reset');
+      setStep('otp');
       setResendCooldown(30);
-      if (res.dev_otp) {
-        setDevOtp(res.dev_otp);
-      }
-      setSuccessMessage(res.message || 'Password reset code sent to your email.');
+      setSuccessMessage(res.message || 'A 6-digit recovery code has been sent to your email inbox.');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       setError(
-        axiosErr.response?.data?.detail || 'Could not find an account with that email.'
+        axiosErr.response?.data?.detail || 'Could not find an account with that email address.'
       );
     } finally {
       setLoading(false);
     }
   };
 
-  // OTP digit handling
+  // OTP inputs handling
   const handleOtpChange = (index: number, value: string) => {
     const cleanVal = value.replace(/\D/g, '').slice(-1);
     const newDigits = [...otpDigits];
@@ -112,26 +108,41 @@ export default function ForgotPasswordPage() {
     otpInputRefs.current[nextIndex]?.focus();
   };
 
-  const fillDevOtp = () => {
-    if (!devOtp || devOtp.length !== 6) return;
-    const digits = devOtp.split('');
-    setOtpDigits(digits);
-    otpInputRefs.current[5]?.focus();
-  };
-
-  // Step 2: Submit OTP and new password
-  const handleResetPassword = async (e: React.FormEvent) => {
+  // ================= Step 2: Verify OTP Code =================
+  const handleVerifyOtpOnly = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     const enteredOtp = otpDigits.join('');
 
     if (enteredOtp.length !== 6) {
-      setError('Please enter the complete 6-digit reset code.');
+      setError('Please enter the complete 6-digit code.');
       return;
     }
 
+    setLoading(true);
+    try {
+      await verifyResetOTP(email, enteredOtp);
+      // Valid! Transition to Step 3 (Set New Password)
+      setStep('new_password');
+      setSuccessMessage('Code verified successfully. Now create your new password.');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } };
+      setError(
+        axiosErr.response?.data?.detail || 'Invalid or expired code. Please check your email or request a new code.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ================= Step 3: Set New Password =================
+  const handleSetNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const enteredOtp = otpDigits.join('');
+
     if (!allChecksMet) {
-      setError('Please ensure your new password satisfies all criteria.');
+      setError('Please ensure your password satisfies all criteria.');
       return;
     }
 
@@ -142,7 +153,7 @@ export default function ForgotPasswordPage() {
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       setError(
-        axiosErr.response?.data?.detail || 'Invalid or expired reset code. Please try again.'
+        axiosErr.response?.data?.detail || 'Failed to update password. Please try requesting a new recovery code.'
       );
     } finally {
       setLoading(false);
@@ -157,16 +168,13 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      const res = await resendOTP(email, 'forgot_password');
+      await resendOTP(email, 'forgot_password');
       setResendCooldown(30);
-      if (res.dev_otp) {
-        setDevOtp(res.dev_otp);
-      }
-      setSuccessMessage('A fresh reset code has been sent to your email.');
+      setSuccessMessage('A fresh 6-digit code has been dispatched to your email inbox.');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       setError(
-        axiosErr.response?.data?.detail || 'Failed to resend reset code. Please try again.'
+        axiosErr.response?.data?.detail || 'Failed to resend code. Please try again.'
       );
     } finally {
       setLoading(false);
@@ -190,6 +198,7 @@ export default function ForgotPasswordPage() {
 
         {/* Card */}
         <div className="bg-surface rounded-2xl border border-border shadow-lg p-8">
+          {/* ================= STEP 1: Enter Email ================= */}
           {step === 'email' && (
             <>
               <div className="text-center mb-6">
@@ -200,7 +209,7 @@ export default function ForgotPasswordPage() {
                   Forgot your password?
                 </h1>
                 <p className="text-sm text-text-secondary mt-1">
-                  Enter your email address and we&apos;ll send you a 6-digit recovery code.
+                  Enter your email address and we&apos;ll send a 6-digit recovery code directly to your inbox.
                 </p>
               </div>
 
@@ -240,13 +249,14 @@ export default function ForgotPasswordPage() {
                   className="w-full mt-2"
                   size="md"
                 >
-                  Send Reset Code
+                  Send Recovery Code
                 </Button>
               </form>
             </>
           )}
 
-          {step === 'reset' && (
+          {/* ================= STEP 2: Enter & Verify OTP ================= */}
+          {step === 'otp' && (
             <div>
               <button
                 type="button"
@@ -256,7 +266,7 @@ export default function ForgotPasswordPage() {
                 }}
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary mb-4 transition-colors"
               >
-                <ArrowLeft className="w-3.5 h-3.5" /> Back
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Email
               </button>
 
               <div className="text-center mb-6">
@@ -264,10 +274,10 @@ export default function ForgotPasswordPage() {
                   <ShieldCheck className="w-6 h-6" />
                 </div>
                 <h1 className="text-2xl font-bold text-text-primary">
-                  Set new password
+                  Enter verification code
                 </h1>
                 <p className="text-sm text-text-secondary mt-1.5">
-                  Enter the 6-digit code sent to <br />
+                  Enter the 6-digit security code sent to <br />
                   <span className="font-semibold text-text-primary">{email}</span>
                 </p>
               </div>
@@ -286,48 +296,91 @@ export default function ForgotPasswordPage() {
                 </div>
               )}
 
-              {devOtp && (
-                <div className="mb-5 p-2.5 bg-indigo-50/80 border border-indigo-200 rounded-lg flex items-center justify-between">
-                  <span className="text-xs text-indigo-700 font-medium">
-                    Test Mode Code: <strong className="tracking-wider">{devOtp}</strong>
-                  </span>
+              <form onSubmit={handleVerifyOtpOnly} className="space-y-6">
+                {/* 6-Digit OTP Boxes */}
+                <div className="flex items-center justify-between gap-2">
+                  {otpDigits.map((digit, idx) => (
+                    <input
+                      key={idx}
+                      ref={(el) => {
+                        otpInputRefs.current[idx] = el;
+                      }}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handleOtpChange(idx, e.target.value)}
+                      onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                      onPaste={handleOtpPaste}
+                      className="w-12 h-14 text-center text-xl font-bold rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all shadow-sm"
+                    />
+                  ))}
+                </div>
+
+                <Button
+                  type="submit"
+                  loading={loading}
+                  disabled={otpDigits.some((d) => !d)}
+                  className="w-full"
+                  size="md"
+                >
+                  Verify Code
+                </Button>
+              </form>
+
+              {/* Resend Code */}
+              <div className="mt-6 text-center">
+                <p className="text-xs text-text-secondary">
+                  Didn&apos;t receive the code? Check Spam folder or{' '}
                   <button
                     type="button"
-                    onClick={fillDevOtp}
-                    className="text-xs text-primary-600 font-semibold hover:underline"
+                    onClick={handleResend}
+                    disabled={resendCooldown > 0 || loading}
+                    className="font-medium text-primary-600 hover:text-primary-700 disabled:text-text-tertiary disabled:cursor-not-allowed inline-flex items-center gap-1 transition-colors"
                   >
-                    Auto-Fill
+                    <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend Code'}
                   </button>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ================= STEP 3: Enter New Password & Confirm ================= */}
+          {step === 'new_password' && (
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('otp');
+                  setError('');
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary mb-4 transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Code
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl mx-auto flex items-center justify-center mb-3">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <h1 className="text-2xl font-bold text-text-primary">
+                  Set New Password
+                </h1>
+                <p className="text-sm text-text-secondary mt-1">
+                  Create a new password for <span className="font-semibold text-text-primary">{email}</span>
+                </p>
+              </div>
+
+              {error && (
+                <div className="mb-5 bg-error-light border border-red-200 rounded-lg px-4 py-3 flex items-start gap-2.5">
+                  <AlertCircle className="w-4.5 h-4.5 text-error shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
               )}
 
-              <form onSubmit={handleResetPassword} className="space-y-4">
-                {/* 6-Digit OTP Boxes */}
-                <div>
-                  <label className="block text-sm font-medium text-text-primary mb-2 text-center">
-                    6-Digit Security Code
-                  </label>
-                  <div className="flex items-center justify-between gap-2">
-                    {otpDigits.map((digit, idx) => (
-                      <input
-                        key={idx}
-                        ref={(el) => {
-                          otpInputRefs.current[idx] = el;
-                        }}
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={1}
-                        value={digit}
-                        onChange={(e) => handleOtpChange(idx, e.target.value)}
-                        onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                        onPaste={handleOtpPaste}
-                        className="w-12 h-14 text-center text-xl font-bold rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all shadow-sm"
-                      />
-                    ))}
-                  </div>
-                </div>
-
+              <form onSubmit={handleSetNewPassword} className="space-y-4">
                 {/* New Password */}
                 <div>
                   <label
@@ -363,7 +416,7 @@ export default function ForgotPasswordPage() {
                     </button>
                   </div>
 
-                  {/* Password requirements */}
+                  {/* Password requirement badges */}
                   {newPassword.length > 0 && (
                     <div className="mt-2 space-y-1">
                       {passwordChecks.map((check) => (
@@ -414,36 +467,21 @@ export default function ForgotPasswordPage() {
                 <Button
                   type="submit"
                   loading={loading}
-                  disabled={!allChecksMet || otpDigits.some((d) => !d)}
+                  disabled={!allChecksMet}
                   className="w-full mt-2"
                   size="md"
                 >
-                  Reset Password & Continue
+                  Reset Password
                 </Button>
               </form>
-
-              {/* Resend */}
-              <div className="mt-6 text-center">
-                <p className="text-xs text-text-secondary">
-                  Didn&apos;t receive code?{' '}
-                  <button
-                    type="button"
-                    onClick={handleResend}
-                    disabled={resendCooldown > 0 || loading}
-                    className="font-medium text-primary-600 hover:text-primary-700 disabled:text-text-tertiary disabled:cursor-not-allowed inline-flex items-center gap-1 transition-colors"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-                    {resendCooldown > 0 ? `Resend in ${resendCooldown}s` : 'Resend Code'}
-                  </button>
-                </p>
-              </div>
             </div>
           )}
 
+          {/* ================= STEP 4: Success Screen ================= */}
           {step === 'success' && (
             <div className="text-center py-4">
-              <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full mx-auto flex items-center justify-center mb-4">
-                <CheckCircle2 className="w-8 h-8" />
+              <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full mx-auto flex items-center justify-center mb-4">
+                <CheckCircle2 className="w-10 h-10" />
               </div>
               <h2 className="text-2xl font-bold text-text-primary mb-2">
                 Password Reset Successfully!

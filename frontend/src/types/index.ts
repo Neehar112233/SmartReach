@@ -22,8 +22,8 @@ export interface OTPActionResponse {
   message: string;
   email: string;
   email_sent: boolean;
-  dev_otp?: string | null;
 }
+
 
 export interface ResetPasswordResponse {
   message: string;

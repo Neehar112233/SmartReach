@@ -18,6 +18,7 @@ interface AuthContextValue extends AuthState {
   registerVerifyOTP: (email: string, otp: string) => Promise<void>;
   register: (fullName: string, email: string, password: string) => Promise<void>;
   forgotPassword: (email: string) => Promise<OTPActionResponse>;
+  verifyResetOTP: (email: string, otp: string) => Promise<boolean>;
   resetPassword: (email: string, otp: string, newPassword: string) => Promise<ResetPasswordResponse>;
   resendOTP: (email: string, purpose: 'register' | 'forgot_password') => Promise<OTPActionResponse>;
   logout: () => void;
@@ -154,6 +155,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  // Validate reset OTP code before asking for new password
+  const verifyResetOTP = useCallback(
+    async (email: string, otp: string): Promise<boolean> => {
+      const { data } = await api.post<{ valid: boolean }>('/api/auth/verify-reset-otp', {
+        email,
+        otp,
+      });
+      return data.valid;
+    },
+    []
+  );
+
   // Submit reset OTP with new password
   const resetPassword = useCallback(
     async (email: string, otp: string, newPassword: string): Promise<ResetPasswordResponse> => {
@@ -166,6 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
 
   // Resend OTP for either registration or forgot_password
   const resendOTP = useCallback(
@@ -204,6 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         registerVerifyOTP,
         register,
         forgotPassword,
+        verifyResetOTP,
         resetPassword,
         resendOTP,
         logout,
