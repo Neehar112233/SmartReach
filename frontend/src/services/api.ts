@@ -47,4 +47,21 @@ export const checkHealth = async (): Promise<HealthResponse> => {
   return data;
 };
 
+// --- Auth & Security ---
+export const getCaptcha = async (): Promise<{ captcha_id: string; captcha_svg: string }> => {
+  const { data } = await api.get<{ captcha_id: string; captcha_svg: string }>('/api/auth/captcha');
+  return data;
+};
+
+export const resetPassword = async (payload: {
+  email: string;
+  captcha_id: string;
+  captcha_code: string;
+  new_password: string;
+}): Promise<{ message: string }> => {
+  const { data } = await api.post<{ message: string }>('/api/auth/reset-password', payload);
+  return data;
+};
+
 export default api;
+

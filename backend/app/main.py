@@ -71,14 +71,9 @@ async def _create_indexes():
         send_logs = get_collection("send_logs")
         await send_logs.create_index([("user_id", 1), ("sent_at", -1)])
         await send_logs.create_index([("campaign_id", 1), ("status", 1)])
-
-        otp_codes = get_collection("otp_codes")
-        await otp_codes.create_index([("email", 1), ("purpose", 1)])
-        await otp_codes.create_index("expires_at", expireAfterSeconds=0)
         logger.info("MongoDB indexes created.")
     except Exception as e:
         logger.warning("Failed to create indexes: %s", e)
-
 
 
 # --- Create FastAPI App ---

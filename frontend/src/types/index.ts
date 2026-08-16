@@ -18,19 +18,6 @@ export interface User {
   updatedAt: string;
 }
 
-export interface OTPActionResponse {
-  message: string;
-  email: string;
-  email_sent: boolean;
-}
-
-
-export interface ResetPasswordResponse {
-  message: string;
-  success: boolean;
-}
-
-
 export interface ExperienceItem {
   title: string;
   company: string;
@@ -292,3 +279,20 @@ export interface HistoryStats {
   total_failed: number;
   total_campaigns: number;
 }
+
+export interface CaptchaResponse {
+  captcha_id: string;
+  captcha_svg: string;
+}
+
+export interface ResetPasswordPayload {
+  email: string;
+  captcha_id: string;
+  captcha_code: string;
+  new_password: string;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+}
+
