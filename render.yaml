@@ -27,4 +27,17 @@ services:
         sync: false
       - key: DEMO_MODE
         value: "false"
+      - key: SYSTEM_SMTP_HOST
+        value: "smtp.gmail.com"
+      - key: SYSTEM_SMTP_PORT
+        value: "587"
+      - key: SYSTEM_SMTP_USER
+        sync: false
+      - key: SYSTEM_SMTP_PASSWORD
+        sync: false
+      - key: SYSTEM_SMTP_SENDER_EMAIL
+        sync: false
+      - key: SYSTEM_SMTP_SENDER_NAME
+        value: "SmartReach AI"
     healthCheckPath: /api/health
+

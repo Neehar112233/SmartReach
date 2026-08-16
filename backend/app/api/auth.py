@@ -1,11 +1,10 @@
 """
 SmartReach AI — Authentication API
 
-Endpoints for user registration, 2FA OTP sign-in verification,
-password recovery, and token issuance.
+Endpoints for registration with Email OTP verification, direct login,
+password reset via Email OTP, and token generation.
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -17,55 +16,340 @@ from app.core.database import get_collection, USERS_COLLECTION
 from app.core.security import hash_password, verify_password, create_access_token
 from app.schemas.auth import (
     RegisterRequest,
+    RegisterSendOTPRequest,
+    RegisterVerifyOTPRequest,
     LoginRequest,
-    LoginInitiateResponse,
-    VerifyLoginOTPRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     ResendOTPRequest,
-    MessageResponse,
+    OTPActionResponse,
     TokenResponse,
     UserBasic,
 )
 from app.services.otp_service import (
-    generate_otp,
-    store_otp,
+    send_registration_otp,
+    send_forgot_password_otp,
     verify_otp,
-    send_auth_otp_email,
+    store_otp,
+    generate_otp,
+    send_system_email,
+    _render_email_template,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# --- Registration Flow (2-Step with Email OTP) ---
+
 @router.post(
-    "/register",
-    response_model=TokenResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a new user",
+    "/register/send-otp",
+    response_model=OTPActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Step 1: Initiate registration and send email OTP",
 )
-async def register(payload: RegisterRequest):
+async def register_send_otp(payload: RegisterSendOTPRequest):
     """
-    Create a new user account.
-    - Validates that the email is not already registered.
-    - Hashes the password with bcrypt.
-    - Returns a JWT access token.
+    Validate registration input and email a 6-digit OTP to the user.
     """
     users = get_collection(USERS_COLLECTION)
+    clean_email = payload.email.lower().strip()
 
-    # Check for existing user
-    existing = await users.find_one({"email": payload.email.lower()})
+    # Check if user already exists
+    existing = await users.find_one({"email": clean_email})
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in instead.",
+        )
+
+    # Hash password securely upfront
+    pw_hash = hash_password(payload.password)
+
+    # Generate and dispatch OTP
+    otp, email_sent, err = await send_registration_otp(
+        email=clean_email,
+        full_name=payload.full_name.strip(),
+        password_hash=pw_hash,
+    )
+
+    logger.info("Registration OTP dispatched to: %s (sent via SMTP: %s)", clean_email, email_sent)
+
+    return OTPActionResponse(
+        message="A 6-digit verification code has been sent to your email.",
+        email=clean_email,
+        email_sent=email_sent,
+        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
+    )
+
+
+@router.post(
+    "/register/verify-otp",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Step 2: Verify registration OTP and activate account",
+)
+async def register_verify_otp(payload: RegisterVerifyOTPRequest):
+    """
+    Verify the 6-digit OTP code and create the user account in MongoDB.
+    """
+    clean_email = payload.email.lower().strip()
+    is_valid, metadata = await verify_otp(clean_email, payload.otp, purpose="register")
+
+    if not is_valid or not metadata:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code. Please request a new code.",
+        )
+
+    users = get_collection(USERS_COLLECTION)
+
+    # Double check to prevent race condition
+    existing = await users.find_one({"email": clean_email})
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
         )
 
-    # Create user document
+    now = datetime.now(timezone.utc)
+    full_name = metadata.get("full_name", "User")
+    pw_hash = metadata.get("password_hash")
+
+    user_doc = {
+        "full_name": full_name,
+        "email": clean_email,
+        "password_hash": pw_hash,
+        "phone": None,
+        "linkedin_url": None,
+        "github_url": None,
+        "portfolio_url": None,
+        "outreach_objective": None,
+        "custom_instructions": None,
+        "resume_uploaded": False,
+        "extracted_profile": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    result = await users.insert_one(user_doc)
+    user_id = str(result.inserted_id)
+
+    logger.info("New verified user registered: %s (%s)", clean_email, user_id)
+
+    # Issue JWT token
+    token = create_access_token(user_id=user_id, email=clean_email)
+
+    return TokenResponse(
+        access_token=token,
+        user=UserBasic(
+            id=user_id,
+            full_name=full_name,
+            email=clean_email,
+        ),
+    )
+
+
+# --- Direct Login Flow (No OTP on Sign In) ---
+
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Login with email and password (Direct sign-in)",
+)
+async def login(payload: LoginRequest):
+    """
+    Authenticate a user directly with email and password without OTP friction.
+    """
+    users = get_collection(USERS_COLLECTION)
+    clean_email = payload.email.lower().strip()
+
+    user = await users.find_one({"email": clean_email})
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    if not verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    user_id = str(user["_id"])
+    logger.info("User logged in directly: %s", clean_email)
+
+    token = create_access_token(user_id=user_id, email=clean_email)
+
+    return TokenResponse(
+        access_token=token,
+        user=UserBasic(
+            id=user_id,
+            full_name=user.get("full_name", "User"),
+            email=user.get("email", clean_email),
+        ),
+    )
+
+
+# --- Forgot Password Flow (2-Step with Email OTP) ---
+
+@router.post(
+    "/forgot-password",
+    response_model=OTPActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Step 1: Request password reset OTP email",
+)
+async def forgot_password(payload: ForgotPasswordRequest):
+    """
+    Find user and dispatch a 6-digit password reset OTP email.
+    """
+    clean_email = payload.email.lower().strip()
+    users = get_collection(USERS_COLLECTION)
+    user = await users.find_one({"email": clean_email})
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account found with this email address.",
+        )
+
+    full_name = user.get("full_name", "User")
+    otp, email_sent, err = await send_forgot_password_otp(
+        email=clean_email,
+        full_name=full_name,
+    )
+
+    logger.info("Password reset OTP dispatched to: %s (sent via SMTP: %s)", clean_email, email_sent)
+
+    return OTPActionResponse(
+        message="A password reset code has been sent to your email.",
+        email=clean_email,
+        email_sent=email_sent,
+        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
+    )
+
+
+@router.post(
+    "/reset-password",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    summary="Step 2: Submit reset OTP with new password",
+)
+async def reset_password(payload: ResetPasswordRequest):
+    """
+    Verify password reset OTP and update user's password in MongoDB.
+    """
+    clean_email = payload.email.lower().strip()
+    is_valid, _ = await verify_otp(clean_email, payload.otp, purpose="forgot_password")
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset code. Please request a new code.",
+        )
+
+    users = get_collection(USERS_COLLECTION)
+    new_hash = hash_password(payload.new_password)
+    now = datetime.now(timezone.utc)
+
+    result = await users.update_one(
+        {"email": clean_email},
+        {"$set": {"password_hash": new_hash, "updated_at": now}},
+    )
+
+    if result.matched_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User account not found.",
+        )
+
+    logger.info("Password successfully reset for user: %s", clean_email)
+
+    return {
+        "message": "Password has been successfully reset. You can now log in with your new password.",
+        "success": True,
+    }
+
+
+# --- Resend OTP Endpoint ---
+
+@router.post(
+    "/resend-otp",
+    response_model=OTPActionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Resend verification or password reset OTP",
+)
+async def resend_otp(payload: ResendOTPRequest):
+    """
+    Resend a fresh OTP for registration or password reset.
+    """
+    clean_email = payload.email.lower().strip()
+    otp_col = get_collection("otp_codes")
+    users_col = get_collection(USERS_COLLECTION)
+
+    if payload.purpose == "register":
+        # Check existing pending OTP metadata
+        existing_otp = await otp_col.find_one({"email": clean_email, "purpose": "register"})
+        full_name = existing_otp.get("metadata", {}).get("full_name", "User") if existing_otp else "User"
+        pw_hash = existing_otp.get("metadata", {}).get("password_hash") if existing_otp else None
+
+        if not pw_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration session expired. Please fill in the sign up form again.",
+            )
+
+        otp, email_sent, err = await send_registration_otp(
+            email=clean_email,
+            full_name=full_name,
+            password_hash=pw_hash,
+        )
+    else:  # forgot_password
+        user = await users_col.find_one({"email": clean_email})
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found with this email address.",
+            )
+        full_name = user.get("full_name", "User")
+        otp, email_sent, err = await send_forgot_password_otp(
+            email=clean_email,
+            full_name=full_name,
+        )
+
+    return OTPActionResponse(
+        message="A new 6-digit code has been sent to your email.",
+        email=clean_email,
+        email_sent=email_sent,
+        dev_otp=otp if (settings.DEMO_MODE or not email_sent or settings.DEBUG) else None,
+    )
+
+
+# --- Legacy direct registration endpoint for compatibility ---
+
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Direct register (backward compatibility)",
+)
+async def direct_register(payload: RegisterRequest):
+    """Legacy endpoint for direct registration without OTP verification."""
+    users = get_collection(USERS_COLLECTION)
+    clean_email = payload.email.lower().strip()
+
+    existing = await users.find_one({"email": clean_email})
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
     now = datetime.now(timezone.utc)
     user_doc = {
         "full_name": payload.full_name.strip(),
-        "email": payload.email.lower(),
+        "email": clean_email,
         "password_hash": hash_password(payload.password),
         "phone": None,
         "linkedin_url": None,
@@ -82,255 +366,12 @@ async def register(payload: RegisterRequest):
     result = await users.insert_one(user_doc)
     user_id = str(result.inserted_id)
 
-    logger.info("New user registered: %s (%s)", payload.email, user_id)
-
-    # Create JWT
-    token = create_access_token(user_id=user_id, email=payload.email.lower())
-
+    token = create_access_token(user_id=user_id, email=clean_email)
     return TokenResponse(
         access_token=token,
         user=UserBasic(
             id=user_id,
             full_name=payload.full_name.strip(),
-            email=payload.email.lower(),
+            email=clean_email,
         ),
     )
-
-
-@router.post(
-    "/login",
-    response_model=LoginInitiateResponse,
-    summary="Initiate login and send 6-digit OTP to user email",
-)
-async def login(payload: LoginRequest):
-    """
-    Step 1 of Login:
-    - Verifies email and password.
-    - Generates a 6-digit verification code (valid for 10 minutes).
-    - Dispatches code to user's registered email address.
-    - Returns confirmation requiring OTP submission.
-    """
-    users = get_collection(USERS_COLLECTION)
-
-    user = await users.find_one({"email": payload.email.lower()})
-    if not user or not verify_password(payload.password, user.get("password_hash", "")):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-        )
-
-    # Generate 6-digit OTP
-    otp = generate_otp(6)
-    await store_otp(
-        email=payload.email.lower(),
-        otp=otp,
-        purpose="login",
-        expires_in_minutes=10,
-    )
-
-    # Send email in background task/thread
-    asyncio.create_task(
-        send_auth_otp_email(
-            recipient_email=payload.email.lower(),
-            otp=otp,
-            purpose="login",
-            user_name=user.get("full_name"),
-        )
-    )
-
-    logger.info("Login OTP dispatched for user %s", payload.email)
-
-    # Include dev_otp if in simulation/demo mode or debug mode
-    dev_code = otp if (settings.DEMO_MODE or settings.DEBUG) else None
-
-    return LoginInitiateResponse(
-        require_otp=True,
-        email=payload.email.lower(),
-        message="A 6-digit verification code has been sent to your email address.",
-        dev_otp=dev_code,
-    )
-
-
-@router.post(
-    "/verify-login-otp",
-    response_model=TokenResponse,
-    summary="Verify 6-digit OTP and complete login",
-)
-async def verify_login_otp(payload: VerifyLoginOTPRequest):
-    """
-    Step 2 of Login:
-    - Validates the 6-digit OTP submitted by the user.
-    - Returns JWT access token upon successful verification.
-    """
-    is_valid = await verify_otp(
-        email=payload.email.lower(),
-        otp=payload.otp,
-        purpose="login",
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification code. Please request a new one.",
-        )
-
-    users = get_collection(USERS_COLLECTION)
-    user = await users.find_one({"email": payload.email.lower()})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User account not found.",
-        )
-
-    user_id = str(user["_id"])
-    logger.info("User successfully completed 2FA sign-in: %s", payload.email)
-
-    token = create_access_token(user_id=user_id, email=payload.email.lower())
-
-    return TokenResponse(
-        access_token=token,
-        user=UserBasic(
-            id=user_id,
-            full_name=user["full_name"],
-            email=user["email"],
-        ),
-    )
-
-
-@router.post(
-    "/forgot-password",
-    response_model=MessageResponse,
-    summary="Request a password reset OTP",
-)
-async def forgot_password(payload: ForgotPasswordRequest):
-    """
-    Step 1 of Password Reset:
-    - Checks if the user exists.
-    - Generates a 6-digit reset code and sends it via email.
-    """
-    users = get_collection(USERS_COLLECTION)
-    user = await users.find_one({"email": payload.email.lower()})
-
-    if not user:
-        # Generic response for security to avoid email enumeration
-        return MessageResponse(
-            message="If an account exists with this email, a 6-digit password reset code has been sent.",
-            email=payload.email.lower(),
-        )
-
-    otp = generate_otp(6)
-    await store_otp(
-        email=payload.email.lower(),
-        otp=otp,
-        purpose="reset_password",
-        expires_in_minutes=10,
-    )
-
-    asyncio.create_task(
-        send_auth_otp_email(
-            recipient_email=payload.email.lower(),
-            otp=otp,
-            purpose="reset_password",
-            user_name=user.get("full_name"),
-        )
-    )
-
-    logger.info("Password reset OTP dispatched for %s", payload.email)
-
-    dev_code = otp if (settings.DEMO_MODE or settings.DEBUG) else None
-
-    return MessageResponse(
-        message="A 6-digit password reset code has been sent to your email.",
-        email=payload.email.lower(),
-        dev_otp=dev_code,
-    )
-
-
-@router.post(
-    "/reset-password",
-    response_model=MessageResponse,
-    summary="Verify reset OTP and update password",
-)
-async def reset_password(payload: ResetPasswordRequest):
-    """
-    Step 2 of Password Reset:
-    - Verifies the 6-digit reset OTP.
-    - Hashes and updates the user's new password in MongoDB.
-    """
-    is_valid = await verify_otp(
-        email=payload.email.lower(),
-        otp=payload.otp,
-        purpose="reset_password",
-    )
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset code. Please request a fresh code.",
-        )
-
-    users = get_collection(USERS_COLLECTION)
-    user = await users.find_one({"email": payload.email.lower()})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User account not found.",
-        )
-
-    new_hash = hash_password(payload.new_password)
-    now = datetime.now(timezone.utc)
-
-    await users.update_one(
-        {"_id": user["_id"]},
-        {"$set": {"password_hash": new_hash, "updated_at": now}},
-    )
-
-    logger.info("Password successfully reset for user %s", payload.email)
-
-    return MessageResponse(
-        message="Your password has been successfully reset. You can now sign in with your new password.",
-        email=payload.email.lower(),
-    )
-
-
-@router.post(
-    "/resend-otp",
-    response_model=MessageResponse,
-    summary="Resend verification OTP code",
-)
-async def resend_otp(payload: ResendOTPRequest):
-    """
-    Resends a fresh 6-digit OTP code for login or password reset.
-    """
-    users = get_collection(USERS_COLLECTION)
-    user = await users.find_one({"email": payload.email.lower()})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No account found with this email.",
-        )
-
-    purpose = payload.purpose if payload.purpose in ["login", "reset_password"] else "login"
-    otp = generate_otp(6)
-    await store_otp(
-        email=payload.email.lower(),
-        otp=otp,
-        purpose=purpose,
-        expires_in_minutes=10,
-    )
-
-    asyncio.create_task(
-        send_auth_otp_email(
-            recipient_email=payload.email.lower(),
-            otp=otp,
-            purpose=purpose,
-            user_name=user.get("full_name"),
-        )
-    )
-
-    dev_code = otp if (settings.DEMO_MODE or settings.DEBUG) else None
-
-    return MessageResponse(
-        message="A new 6-digit verification code has been sent to your email.",
-        email=payload.email.lower(),
-        dev_otp=dev_code,
-    )
-

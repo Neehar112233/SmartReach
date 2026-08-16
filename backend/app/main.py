@@ -80,6 +80,7 @@ async def _create_indexes():
         logger.warning("Failed to create indexes: %s", e)
 
 
+
 # --- Create FastAPI App ---
 
 app = FastAPI(

@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     EMAIL_DELAY_SECONDS: float = 2.0
     MAX_CONSECUTIVE_FAILURES: int = 5
 
+    # --- System SMTP (for Auth OTPs & Password Resets) ---
+    SYSTEM_SMTP_HOST: str = "smtp.gmail.com"
+    SYSTEM_SMTP_PORT: int = 587
+    SYSTEM_SMTP_USER: Optional[str] = None
+    SYSTEM_SMTP_PASSWORD: Optional[str] = None
+    SYSTEM_SMTP_SENDER_EMAIL: Optional[str] = None
+    SYSTEM_SMTP_SENDER_NAME: str = "SmartReach AI"
+    SYSTEM_SMTP_USE_TLS: bool = True
+    SYSTEM_SMTP_USE_SSL: bool = False
+    OTP_EXPIRY_MINUTES: int = 10
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

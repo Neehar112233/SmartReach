@@ -1,62 +1,63 @@
 """
 SmartReach AI — Authentication Schemas
 
-Pydantic models for registration, login, and token responses.
+Pydantic models for registration, email OTP verification, login,
+password recovery, and token responses.
 """
 
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
-    """User registration request."""
+    """Legacy/direct user registration request."""
     full_name: str = Field(..., min_length=2, max_length=100, examples=["Neehar Sharma"])
     email: EmailStr = Field(..., examples=["neehar@example.com"])
     password: str = Field(..., min_length=8, max_length=128, examples=["securePassword123"])
 
 
+class RegisterSendOTPRequest(BaseModel):
+    """Initiate registration by validating credentials and sending verification OTP."""
+    full_name: str = Field(..., min_length=2, max_length=100, examples=["Neehar Sharma"])
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    password: str = Field(..., min_length=8, max_length=128, examples=["securePassword123"])
+
+
+class RegisterVerifyOTPRequest(BaseModel):
+    """Verify registration OTP and create user account."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
+
+
 class LoginRequest(BaseModel):
-    """User login credential verification."""
+    """Direct user login request."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
     password: str = Field(..., examples=["securePassword123"])
 
 
-class LoginInitiateResponse(BaseModel):
-    """Response when credentials are valid, requesting OTP verification."""
-    require_otp: bool = True
-    email: str
-    message: str
-    dev_otp: Optional[str] = None
-
-
-class VerifyLoginOTPRequest(BaseModel):
-    """Submit 6-digit OTP to complete login."""
-    email: EmailStr = Field(..., examples=["neehar@example.com"])
-    otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
-
-
 class ForgotPasswordRequest(BaseModel):
-    """Request password reset code."""
+    """Request password reset OTP email."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
 
 
 class ResetPasswordRequest(BaseModel):
-    """Submit OTP and new password to reset account password."""
+    """Submit reset OTP with new password."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
     otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
-    new_password: str = Field(..., min_length=8, max_length=128, examples=["newSecurePass123"])
+    new_password: str = Field(..., min_length=8, max_length=128, examples=["newSecurePassword123"])
 
 
 class ResendOTPRequest(BaseModel):
-    """Request a fresh OTP code."""
+    """Resend verification or reset OTP code."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
-    purpose: str = Field("login", examples=["login", "reset_password"])
+    purpose: Literal["register", "forgot_password"] = Field(..., examples=["register"])
 
 
-class MessageResponse(BaseModel):
-    """Generic message response."""
+class OTPActionResponse(BaseModel):
+    """Generic response for OTP triggering actions."""
     message: str
-    email: Optional[str] = None
+    email: str
+    email_sent: bool = True
     dev_otp: Optional[str] = None
 
 
@@ -76,4 +77,3 @@ class UserBasic(BaseModel):
 
 # Rebuild model to resolve forward reference
 TokenResponse.model_rebuild()
-

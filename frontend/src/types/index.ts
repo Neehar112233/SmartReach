@@ -18,6 +18,19 @@ export interface User {
   updatedAt: string;
 }
 
+export interface OTPActionResponse {
+  message: string;
+  email: string;
+  email_sent: boolean;
+  dev_otp?: string | null;
+}
+
+export interface ResetPasswordResponse {
+  message: string;
+  success: boolean;
+}
+
+
 export interface ExperienceItem {
   title: string;
   company: string;

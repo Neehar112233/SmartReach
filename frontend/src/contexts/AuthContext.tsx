@@ -1,22 +1,9 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import type { User } from '../types';
+import type { User, OTPActionResponse, ResetPasswordResponse } from '../types';
 import api from '../services/api';
 
 // --- Types ---
-
-export interface InitiateLoginResult {
-  require_otp: boolean;
-  email: string;
-  message: string;
-  dev_otp?: string;
-}
-
-export interface GenericAuthResult {
-  message: string;
-  email?: string;
-  dev_otp?: string;
-}
 
 interface AuthState {
   user: User | null;
@@ -26,13 +13,13 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  initiateLogin: (email: string, password: string) => Promise<InitiateLoginResult>;
-  verifyLoginOTP: (email: string, otp: string) => Promise<void>;
-  resendOTP: (email: string, purpose?: string) => Promise<GenericAuthResult>;
-  forgotPassword: (email: string) => Promise<GenericAuthResult>;
-  resetPassword: (email: string, otp: string, newPassword: string) => Promise<GenericAuthResult>;
-  login: (email: string, password: string) => Promise<InitiateLoginResult>;
+  login: (email: string, password: string) => Promise<void>;
+  registerSendOTP: (fullName: string, email: string, password: string) => Promise<OTPActionResponse>;
+  registerVerifyOTP: (email: string, otp: string) => Promise<void>;
   register: (fullName: string, email: string, password: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<OTPActionResponse>;
+  resetPassword: (email: string, otp: string, newPassword: string) => Promise<ResetPasswordResponse>;
+  resendOTP: (email: string, purpose: 'register' | 'forgot_password') => Promise<OTPActionResponse>;
   logout: () => void;
   updateUser: (user: User) => void;
 }
@@ -90,13 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const initiateLogin = useCallback(async (email: string, password: string): Promise<InitiateLoginResult> => {
+  // Direct login without OTP
+  const login = useCallback(async (email: string, password: string) => {
     const { data } = await api.post('/api/auth/login', { email, password });
-    return data;
-  }, []);
-
-  const verifyLoginOTP = useCallback(async (email: string, otp: string): Promise<void> => {
-    const { data } = await api.post('/api/auth/verify-login-otp', { email, otp });
     const user: User = {
       id: data.user.id,
       fullName: data.user.full_name,
@@ -108,27 +91,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistSession(data.access_token, user);
   }, []);
 
-  const resendOTP = useCallback(async (email: string, purpose: string = 'login'): Promise<GenericAuthResult> => {
-    const { data } = await api.post('/api/auth/resend-otp', { email, purpose });
-    return data;
-  }, []);
+  // Step 1: Send registration OTP
+  const registerSendOTP = useCallback(
+    async (fullName: string, email: string, password: string): Promise<OTPActionResponse> => {
+      const { data } = await api.post<OTPActionResponse>('/api/auth/register/send-otp', {
+        full_name: fullName,
+        email,
+        password,
+      });
+      return data;
+    },
+    []
+  );
 
-  const forgotPassword = useCallback(async (email: string): Promise<GenericAuthResult> => {
-    const { data } = await api.post('/api/auth/forgot-password', { email });
-    return data;
-  }, []);
+  // Step 2: Verify registration OTP & log in
+  const registerVerifyOTP = useCallback(
+    async (email: string, otp: string): Promise<void> => {
+      const { data } = await api.post('/api/auth/register/verify-otp', {
+        email,
+        otp,
+      });
+      const user: User = {
+        id: data.user.id,
+        fullName: data.user.full_name,
+        email: data.user.email,
+        resumeUploaded: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      persistSession(data.access_token, user);
+    },
+    []
+  );
 
-  const resetPassword = useCallback(async (email: string, otp: string, newPassword: string): Promise<GenericAuthResult> => {
-    const { data } = await api.post('/api/auth/reset-password', {
-      email,
-      otp,
-      new_password: newPassword,
-    });
-    return data;
-  }, []);
-
-  const login = initiateLogin;
-
+  // Legacy direct registration fallback
   const register = useCallback(
     async (fullName: string, email: string, password: string) => {
       const { data } = await api.post('/api/auth/register', {
@@ -145,6 +141,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updatedAt: new Date().toISOString(),
       };
       persistSession(data.access_token, user);
+    },
+    []
+  );
+
+  // Request password reset OTP
+  const forgotPassword = useCallback(
+    async (email: string): Promise<OTPActionResponse> => {
+      const { data } = await api.post<OTPActionResponse>('/api/auth/forgot-password', { email });
+      return data;
+    },
+    []
+  );
+
+  // Submit reset OTP with new password
+  const resetPassword = useCallback(
+    async (email: string, otp: string, newPassword: string): Promise<ResetPasswordResponse> => {
+      const { data } = await api.post<ResetPasswordResponse>('/api/auth/reset-password', {
+        email,
+        otp,
+        new_password: newPassword,
+      });
+      return data;
+    },
+    []
+  );
+
+  // Resend OTP for either registration or forgot_password
+  const resendOTP = useCallback(
+    async (email: string, purpose: 'register' | 'forgot_password'): Promise<OTPActionResponse> => {
+      const { data } = await api.post<OTPActionResponse>('/api/auth/resend-otp', {
+        email,
+        purpose,
+      });
+      return data;
     },
     []
   );
@@ -169,13 +199,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <AuthContext.Provider
       value={{
         ...state,
-        initiateLogin,
-        verifyLoginOTP,
-        resendOTP,
+        login,
+        registerSendOTP,
+        registerVerifyOTP,
+        register,
         forgotPassword,
         resetPassword,
-        login,
-        register,
+        resendOTP,
         logout,
         updateUser,
       }}
