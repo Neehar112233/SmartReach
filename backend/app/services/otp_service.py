@@ -52,17 +52,17 @@ async def send_system_email_via_resend(
                 },
                 json={
                     "from": sender,
-                    "to": [f"{recipient_name} <{recipient_email}>" if recipient_name else recipient_email],
+                    "to": [recipient_email.strip()],
                     "subject": subject,
                     "html": html_content,
                     "text": text_content,
                 },
             )
             if resp.status_code in [200, 201]:
-                logger.info("Email delivered via Resend API to %s", recipient_email)
+                logger.info("Email successfully delivered via Resend API to %s", recipient_email)
                 return True, None
             else:
-                err_msg = f"Resend API error: {resp.status_code} {resp.text}"
+                err_msg = f"Resend API error ({resp.status_code}): {resp.text}"
                 logger.error(err_msg)
                 return False, err_msg
     except Exception as e:
@@ -86,10 +86,6 @@ def send_system_email_via_smtp_sync(
     sender_name = settings.SYSTEM_SMTP_SENDER_NAME
 
     if not host or not user or not password:
-        logger.warning(
-            "System SMTP credentials not configured (SYSTEM_SMTP_USER/PASSWORD). Live email delivery skipped for %s.",
-            recipient_email,
-        )
         return False, "System SMTP credentials are not configured on the server."
 
     msg = MIMEMultipart("alternative")
@@ -140,7 +136,7 @@ async def send_system_email(
     html_content: str,
 ) -> Tuple[bool, Optional[str]]:
     """
-    Deliver transactional email trying Resend API first (if set), then SMTP.
+    Deliver transactional email trying Resend API first (if set), with SMTP fallback.
     """
     if settings.RESEND_API_KEY:
         ok, err = await send_system_email_via_resend(
@@ -148,6 +144,7 @@ async def send_system_email(
         )
         if ok:
             return True, None
+        logger.warning("Resend delivery failed for %s (%s). Trying SMTP fallback...", recipient_email, err)
 
     return await asyncio.to_thread(
         send_system_email_via_smtp_sync,
@@ -157,6 +154,7 @@ async def send_system_email(
         text_content=text_content,
         html_content=html_content,
     )
+
 
 
 def _render_email_template(title: str, greeting: str, description: str, otp: str, footnote: str) -> Tuple[str, str]:

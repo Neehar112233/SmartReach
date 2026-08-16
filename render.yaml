@@ -39,5 +39,8 @@ services:
         sync: false
       - key: SYSTEM_SMTP_SENDER_NAME
         value: "SmartReach AI"
+      - key: RESEND_API_KEY
+        sync: false
     healthCheckPath: /api/health
+
 
