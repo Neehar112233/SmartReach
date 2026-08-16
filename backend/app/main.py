@@ -90,11 +90,9 @@ app = FastAPI(
 
 # --- CORS ---
 
-allowed_origins = [
-    settings.FRONTEND_URL,
-]
+allowed_origins = [origin.strip() for origin in settings.FRONTEND_URL.split(",") if origin.strip()]
 
-# In development, also allow common localhost variants
+# In development or default mode, also allow common localhost variants
 if settings.DEBUG or "localhost" in settings.FRONTEND_URL:
     allowed_origins.extend([
         "http://localhost:5173",
@@ -106,6 +104,7 @@ if settings.DEBUG or "localhost" in settings.FRONTEND_URL:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(set(allowed_origins)),
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
