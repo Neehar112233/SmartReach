@@ -5,6 +5,19 @@ import api from '../services/api';
 
 // --- Types ---
 
+export interface InitiateLoginResult {
+  require_otp: boolean;
+  email: string;
+  message: string;
+  dev_otp?: string;
+}
+
+export interface GenericAuthResult {
+  message: string;
+  email?: string;
+  dev_otp?: string;
+}
+
 interface AuthState {
   user: User | null;
   token: string | null;
@@ -13,7 +26,12 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  initiateLogin: (email: string, password: string) => Promise<InitiateLoginResult>;
+  verifyLoginOTP: (email: string, otp: string) => Promise<void>;
+  resendOTP: (email: string, purpose?: string) => Promise<GenericAuthResult>;
+  forgotPassword: (email: string) => Promise<GenericAuthResult>;
+  resetPassword: (email: string, otp: string, newPassword: string) => Promise<GenericAuthResult>;
+  login: (email: string, password: string) => Promise<InitiateLoginResult>;
   register: (fullName: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   updateUser: (user: User) => void;
@@ -72,8 +90,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const login = useCallback(async (email: string, password: string) => {
+  const initiateLogin = useCallback(async (email: string, password: string): Promise<InitiateLoginResult> => {
     const { data } = await api.post('/api/auth/login', { email, password });
+    return data;
+  }, []);
+
+  const verifyLoginOTP = useCallback(async (email: string, otp: string): Promise<void> => {
+    const { data } = await api.post('/api/auth/verify-login-otp', { email, otp });
     const user: User = {
       id: data.user.id,
       fullName: data.user.full_name,
@@ -84,6 +107,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     persistSession(data.access_token, user);
   }, []);
+
+  const resendOTP = useCallback(async (email: string, purpose: string = 'login'): Promise<GenericAuthResult> => {
+    const { data } = await api.post('/api/auth/resend-otp', { email, purpose });
+    return data;
+  }, []);
+
+  const forgotPassword = useCallback(async (email: string): Promise<GenericAuthResult> => {
+    const { data } = await api.post('/api/auth/forgot-password', { email });
+    return data;
+  }, []);
+
+  const resetPassword = useCallback(async (email: string, otp: string, newPassword: string): Promise<GenericAuthResult> => {
+    const { data } = await api.post('/api/auth/reset-password', {
+      email,
+      otp,
+      new_password: newPassword,
+    });
+    return data;
+  }, []);
+
+  const login = initiateLogin;
 
   const register = useCallback(
     async (fullName: string, email: string, password: string) => {
@@ -123,7 +167,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ ...state, login, register, logout, updateUser }}
+      value={{
+        ...state,
+        initiateLogin,
+        verifyLoginOTP,
+        resendOTP,
+        forgotPassword,
+        resetPassword,
+        login,
+        register,
+        logout,
+        updateUser,
+      }}
     >
       {children}
     </AuthContext.Provider>

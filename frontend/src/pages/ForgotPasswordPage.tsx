@@ -1,28 +1,24 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Zap, Mail, Lock, AlertCircle, Eye, EyeOff, ShieldCheck, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Zap, Mail, Lock, AlertCircle, Eye, EyeOff, CheckCircle2, ArrowLeft, RefreshCw, KeyRound } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import Button from '../components/ui/Button';
 
-export default function LoginPage() {
-  const { initiateLogin, verifyLoginOTP, resendOTP } = useAuth();
+export default function ForgotPasswordPage() {
+  const { forgotPassword, resetPassword, resendOTP } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/dashboard';
 
-  // Step 1 State: Credentials
-  const [step, setStep] = useState<'credentials' | 'otp'>('credentials');
+  const [step, setStep] = useState<'email' | 'reset' | 'success'>('email');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Step 2 State: 2FA OTP
   const [otpValues, setOtpValues] = useState<string[]>(['', '', '', '', '', '']);
   const [devOtp, setDevOtp] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState<number>(0);
   const [resendMessage, setResendMessage] = useState<string>('');
 
-  // Status State
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -37,32 +33,30 @@ export default function LoginPage() {
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
-  // Focus first OTP field when entering OTP step
+  // Focus first OTP field when entering reset step
   useEffect(() => {
-    if (step === 'otp') {
+    if (step === 'reset') {
       setTimeout(() => {
         otpInputsRef.current[0]?.focus();
       }, 100);
     }
   }, [step]);
 
-  // Step 1: Submit Credentials & Request OTP
-  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+  // Step 1: Submit Email for Reset Code
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setResendMessage('');
     setLoading(true);
 
     try {
-      const res = await initiateLogin(email, password);
-      if (res.require_otp) {
-        setDevOtp(res.dev_otp || null);
-        setStep('otp');
-        setResendCooldown(30);
-      }
+      const res = await forgotPassword(email);
+      setDevOtp(res.dev_otp || null);
+      setStep('reset');
+      setResendCooldown(30);
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
-      setError(axiosErr.response?.data?.detail || 'Invalid email or password. Please try again.');
+      setError(axiosErr.response?.data?.detail || 'Failed to send reset code. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -74,7 +68,6 @@ export default function LoginPage() {
     const newValues = [...otpValues];
 
     if (cleanVal.length > 1) {
-      // User pasted or typed multiple digits
       const pastedChars = cleanVal.slice(0, 6).split('');
       for (let i = 0; i < 6; i++) {
         newValues[i] = pastedChars[i] || '';
@@ -88,7 +81,6 @@ export default function LoginPage() {
     newValues[index] = cleanVal;
     setOtpValues(newValues);
 
-    // Auto-advance to next input
     if (cleanVal && index < 5) {
       otpInputsRef.current[index + 1]?.focus();
     }
@@ -114,12 +106,20 @@ export default function LoginPage() {
     }
   };
 
-  // Step 2: Submit 6-digit OTP
-  const handleOtpSubmit = async (e: React.FormEvent) => {
+  // Step 2: Submit OTP & New Password
+  const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const enteredOtp = otpValues.join('');
     if (enteredOtp.length !== 6) {
-      setError('Please enter all 6 digits of your verification code.');
+      setError('Please enter all 6 digits of your reset code.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match.');
       return;
     }
 
@@ -127,17 +127,17 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await verifyLoginOTP(email, enteredOtp);
-      navigate(from, { replace: true });
+      await resetPassword(email, enteredOtp, newPassword);
+      setStep('success');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
-      setError(axiosErr.response?.data?.detail || 'Invalid or expired verification code.');
+      setError(axiosErr.response?.data?.detail || 'Invalid reset code or failed to update password.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Resend OTP handler
+  // Resend OTP
   const handleResendOtp = async () => {
     if (resendCooldown > 0 || loading) return;
     setError('');
@@ -145,15 +145,15 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await resendOTP(email, 'login');
-      setResendMessage('A fresh verification code has been sent!');
+      const res = await resendOTP(email, 'reset_password');
+      setResendMessage('A fresh password reset code has been sent!');
       if (res.dev_otp) setDevOtp(res.dev_otp);
       setResendCooldown(30);
       setOtpValues(['', '', '', '', '', '']);
       otpInputsRef.current[0]?.focus();
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
-      setError(axiosErr.response?.data?.detail || 'Failed to resend code. Please try again.');
+      setError(axiosErr.response?.data?.detail || 'Failed to resend code.');
     } finally {
       setLoading(false);
     }
@@ -186,12 +186,24 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-surface rounded-2xl border border-border shadow-xl p-8 transition-all">
-          {step === 'credentials' ? (
+          {step === 'email' && (
             <>
+              <div className="flex items-center justify-between mb-4">
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Back to sign in
+                </Link>
+              </div>
+
               <div className="text-center mb-6">
-                <h1 className="text-2xl font-bold text-text-primary">Welcome back</h1>
+                <div className="w-12 h-12 bg-primary-100 dark:bg-primary-900/40 rounded-2xl flex items-center justify-center mx-auto mb-3 text-primary-600">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <h1 className="text-2xl font-bold text-text-primary">Forgot Password?</h1>
                 <p className="text-sm text-text-secondary mt-1">
-                  Sign in to your account with password & 2FA.
+                  Enter your registered email and we&apos;ll send you a 6-digit recovery code.
                 </p>
               </div>
 
@@ -202,11 +214,10 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <form onSubmit={handleCredentialsSubmit} className="space-y-4">
-                {/* Email */}
+              <form onSubmit={handleEmailSubmit} className="space-y-4">
                 <div>
                   <label
-                    htmlFor="login-email"
+                    htmlFor="reset-email"
                     className="block text-sm font-medium text-text-primary mb-1.5"
                   >
                     Email Address
@@ -214,7 +225,7 @@ export default function LoginPage() {
                   <div className="relative">
                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-text-tertiary" />
                     <input
-                      id="login-email"
+                      id="reset-email"
                       type="email"
                       required
                       value={email}
@@ -226,96 +237,41 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                {/* Password */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label
-                      htmlFor="login-password"
-                      className="block text-sm font-medium text-text-primary"
-                    >
-                      Password
-                    </label>
-                    <Link
-                      to="/forgot-password"
-                      className="text-xs font-semibold text-primary-600 hover:text-primary-700 transition-colors"
-                    >
-                      Forgot password?
-                    </Link>
-                  </div>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-text-tertiary" />
-                    <input
-                      id="login-password"
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow"
-                      placeholder="Enter your password"
-                      autoComplete="current-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary transition-colors"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                      {showPassword ? (
-                        <EyeOff className="w-4.5 h-4.5" />
-                      ) : (
-                        <Eye className="w-4.5 h-4.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
                 <Button
                   type="submit"
                   loading={loading}
                   className="w-full mt-2"
                   size="md"
                 >
-                  Continue with Sign In
+                  Send Recovery Code
                 </Button>
               </form>
-
-              <p className="mt-6 text-center text-sm text-text-secondary">
-                Don&apos;t have an account?{' '}
-                <Link
-                  to="/register"
-                  className="font-medium text-primary-600 hover:text-primary-700"
-                >
-                  Create one
-                </Link>
-              </p>
             </>
-          ) : (
+          )}
+
+          {step === 'reset' && (
             <>
-              {/* Step 2: OTP Verification Screen */}
               <div className="flex items-center justify-between mb-4">
                 <button
                   type="button"
                   onClick={() => {
-                    setStep('credentials');
+                    setStep('email');
                     setError('');
                     setResendMessage('');
                   }}
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
                 >
-                  <ArrowLeft className="w-4 h-4" /> Back to credentials
+                  <ArrowLeft className="w-4 h-4" /> Change email
                 </button>
-                <div className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-primary-50 dark:bg-primary-950/40 text-primary-600 dark:text-primary-400 border border-primary-200/50 dark:border-primary-800/40">
-                  <ShieldCheck className="w-3.5 h-3.5" /> 2FA Active
-                </div>
               </div>
 
               <div className="text-center mb-6">
                 <div className="w-12 h-12 bg-primary-100 dark:bg-primary-900/40 rounded-2xl flex items-center justify-center mx-auto mb-3 text-primary-600">
-                  <ShieldCheck className="w-6 h-6" />
+                  <KeyRound className="w-6 h-6" />
                 </div>
-                <h1 className="text-xl font-bold text-text-primary">Check your email</h1>
+                <h1 className="text-xl font-bold text-text-primary">Reset Your Password</h1>
                 <p className="text-xs text-text-secondary mt-1">
-                  We sent a 6-digit verification code to:
+                  Enter the 6-digit code sent to:
                 </p>
                 <p className="text-sm font-semibold text-text-primary mt-0.5 bg-surface-secondary py-1 px-3 rounded-lg inline-block">
                   {email}
@@ -331,7 +287,6 @@ export default function LoginPage() {
 
               {resendMessage && (
                 <div className="mb-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/50 rounded-xl px-4 py-2.5 flex items-start gap-2.5">
-                  <Sparkles className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
                   <p className="text-xs text-emerald-700 dark:text-emerald-300">{resendMessage}</p>
                 </div>
               )}
@@ -351,39 +306,100 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <form onSubmit={handleOtpSubmit} className="space-y-5">
-                {/* 6 Digit OTP Inputs */}
-                <div className="flex items-center justify-between gap-1.5 sm:gap-2">
-                  {otpValues.map((digit, index) => (
+              <form onSubmit={handleResetSubmit} className="space-y-4">
+                {/* 6 Digit OTP */}
+                <div>
+                  <label className="block text-xs font-medium text-text-primary mb-1.5">
+                    6-Digit Verification Code
+                  </label>
+                  <div className="flex items-center justify-between gap-1.5">
+                    {otpValues.map((digit, index) => (
+                      <input
+                        key={index}
+                        ref={(el) => { otpInputsRef.current[index] = el; }}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={digit}
+                        onChange={(e) => handleOtpChange(index, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                        onPaste={handlePaste}
+                        className="w-11 h-12 text-center text-lg font-bold rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all shadow-sm"
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* New Password */}
+                <div>
+                  <label
+                    htmlFor="reset-new-password"
+                    className="block text-sm font-medium text-text-primary mb-1.5"
+                  >
+                    New Password (min. 8 characters)
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-text-tertiary" />
                     <input
-                      key={index}
-                      ref={(el) => { otpInputsRef.current[index] = el; }}
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={digit}
-                      onChange={(e) => handleOtpChange(index, e.target.value)}
-                      onKeyDown={(e) => handleOtpKeyDown(index, e)}
-                      onPaste={handlePaste}
-                      className="w-11 h-12 sm:w-12 sm:h-14 text-center text-lg sm:text-xl font-bold rounded-xl border border-border bg-surface text-text-primary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all shadow-sm"
+                      id="reset-new-password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      minLength={8}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow"
+                      placeholder="Enter new password"
+                      autoComplete="new-password"
                     />
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary transition-colors"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Confirm New Password */}
+                <div>
+                  <label
+                    htmlFor="reset-confirm-password"
+                    className="block text-sm font-medium text-text-primary mb-1.5"
+                  >
+                    Confirm New Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-text-tertiary" />
+                    <input
+                      id="reset-confirm-password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      minLength={8}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-surface text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-shadow"
+                      placeholder="Re-enter new password"
+                      autoComplete="new-password"
+                    />
+                  </div>
                 </div>
 
                 <Button
                   type="submit"
                   loading={loading}
-                  className="w-full"
+                  className="w-full mt-2"
                   size="md"
                 >
-                  Verify & Complete Sign In
+                  Update & Save Password
                 </Button>
               </form>
 
               {/* Resend Section */}
-              <div className="mt-6 text-center">
+              <div className="mt-5 text-center">
                 <p className="text-xs text-text-secondary">
-                  Didn&apos;t receive the email?{' '}
+                  Didn&apos;t receive the code?{' '}
                   {resendCooldown > 0 ? (
                     <span className="text-text-tertiary font-medium">
                       Resend in {resendCooldown}s
@@ -401,6 +417,26 @@ export default function LoginPage() {
                 </p>
               </div>
             </>
+          )}
+
+          {step === 'success' && (
+            <div className="text-center py-4">
+              <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-950/40 rounded-full flex items-center justify-center mx-auto mb-4 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-bold text-text-primary">Password Reset Successful!</h2>
+              <p className="text-sm text-text-secondary mt-2 mb-6">
+                Your password has been securely updated. You can now log into your account with your new credentials.
+              </p>
+              <Button
+                type="button"
+                onClick={() => navigate('/login')}
+                className="w-full"
+                size="md"
+              >
+                Sign In with New Password
+              </Button>
+            </div>
           )}
         </div>
       </div>

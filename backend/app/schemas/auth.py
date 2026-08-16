@@ -4,6 +4,7 @@ SmartReach AI — Authentication Schemas
 Pydantic models for registration, login, and token responses.
 """
 
+from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -15,9 +16,48 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """User login request."""
+    """User login credential verification."""
     email: EmailStr = Field(..., examples=["neehar@example.com"])
     password: str = Field(..., examples=["securePassword123"])
+
+
+class LoginInitiateResponse(BaseModel):
+    """Response when credentials are valid, requesting OTP verification."""
+    require_otp: bool = True
+    email: str
+    message: str
+    dev_otp: Optional[str] = None
+
+
+class VerifyLoginOTPRequest(BaseModel):
+    """Submit 6-digit OTP to complete login."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Request password reset code."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+
+
+class ResetPasswordRequest(BaseModel):
+    """Submit OTP and new password to reset account password."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    otp: str = Field(..., min_length=6, max_length=6, examples=["123456"])
+    new_password: str = Field(..., min_length=8, max_length=128, examples=["newSecurePass123"])
+
+
+class ResendOTPRequest(BaseModel):
+    """Request a fresh OTP code."""
+    email: EmailStr = Field(..., examples=["neehar@example.com"])
+    purpose: str = Field("login", examples=["login", "reset_password"])
+
+
+class MessageResponse(BaseModel):
+    """Generic message response."""
+    message: str
+    email: Optional[str] = None
+    dev_otp: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
@@ -36,3 +76,4 @@ class UserBasic(BaseModel):
 
 # Rebuild model to resolve forward reference
 TokenResponse.model_rebuild()
+
